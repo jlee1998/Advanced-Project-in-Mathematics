@@ -1,0 +1,367 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+---
+title: "M3S9 Coursework"
+author: "Jonghyeon Lee"
+date: "15/11/2019"
+output: html_document
+
+###0. Preliminaries
+
+To obtain our a,b,c and d for our function $\frac{\exp(-\frac{1}{c}(d+\log(\frac{x-a}{b-x}))^2)}{(b-x)(x-a)}$, we must determine the largest factor of the CID 01340670. A quick way to do this is to import the numbers package, which has the function primeFactors that returns a vector containing the prime factors.
+```{r}
+library(numbers)
+primeFactors(1340670)
+```
+The corresponding a,b,c,d for 67 is a=1, b=3, c=2, d=-0.6
+
+###1. Rejection
+We define our $f*_X (x)$, a function proportional to a pdf $f_X (x)$.
+Suppose we have a pdf $f_X (x)$ that we cannot sample from via inversion.
+Then what we do is find an invertible $g_Y (x)$ such that $f_X (x)> 0 \implies g_Y (x) > 0$ and $\frac{f_X (x)}{g_Y (x)}\leq M=\sup_x \frac{f_X (x)}{g_Y (x)}<\infty$.
+We sample from $g_Y (x)$, generate a random uniform $U=u \sim U(0,1)$, and let $X=y$ if $u \leq \frac{f_X (y)}{Mg_Y (y)}$.
+If our desired $f_X (x)$ is only known up to proportionality, as in our case, then our $M=\sup_x \frac{f*_X (x)}{g_Y (x)}$,where $f_X (x)=\frac{f*_X (x)}{\int f*_X (y)dy}$ and we accept $u$ if $u \leq \frac{f*_X (y)}{Mg_Y (y)}$
+```{r}
+#define fstar
+fstar<-function(x){
+fstar=exp(-(-0.6+log((x-1)/(3-x)))^2/2)/((x-1)*(3-x))
+return(fstar)}
+```
+We can now visualize our function. Note that $f*_X (x)$ is undefined at $x=1$ and $x=3$, hence our start and end points are slightly over 1 and under 3 respectively.
+```{r}
+#define interval
+x<-seq(1+(10^(-6)),3-(10^(-6)),10^-6)
+#plot x against f*
+plot(x, fstar(x),
+main="The Bottle Throwing Function f*(x)",
+ylab="f*(x)",
+type="l",
+col="blue")
+```
+A trapezium function $g_Y (x)$ with edge coordinates $(1,0),(2.2,0.8),(2.7,0.8),(3,0)$ has a shape similar to that of $f*_X (x)$ and is invertible as it is composed of straight lines:
+$$g_Y (x)= \begin{cases}
+\frac{2(x-1)}{3} & 1<x \leq 2.2 \\
+0.8 & 2.2<x<2.7 \\
+\frac{8(3-x)}{3} & 2.7 \leq x < 3 \\ 0 & otherwise
+\end{cases}$$
+
+```{r}
+#construct trapezium function
+g <- function(y){
+ifelse(y <= 2.2,(2/3)*(y-1),
+ifelse(y <= 2.7, x <- 0.8
+,8*(3-y)/3))
+}
+#define interval
+x<-seq(1+(10^(-6)),3-(10^(-6)),10^-6)
+#plot x against g
+plot(x, g(x),
+main="g(x)",
+ylab="g(x)",
+type="l",
+col="blue")
+```
+As our trapezium function is piecewise, we must break down our g into its three components to find the maximum of $\frac{f*_X (x)}{g_Y (x)}$.
+```{r}
+x_1<-seq(1+10^-6,2.2,10^-6)
+x_2<-seq(2.2,2.7,10^-6)
+x_3<-seq(2.7,3-10^-6,10^-6)
+#output sup_x (f*/g)
+M=max(1.5*fstar(x_1)/(x_1-1),1.5*fstar(x_2)/1.2,1.5*fstar(x_3)/4*(3-x_3))
+```
+Our theoretical acceptance probability is defined as the area under our $f*_X (x)$ divided by our M: $\frac{\int f*_X (x) \mathrm{d}x}{M}$. Although our $f*_X (x)$, is not analytically integrable, R contains an inbuilt integrate function that calculates an approximation with numerical methods:
+```{r}
+integrate(fstar,1,3)
+#calculate acceptance probability=area under f* divided by M
+Acc_prob=1.253314/M
+```
+We shall clearly state the CDF $G_Y (x)$ below:
+$$G_Y (x)= \begin{cases}
+\frac{x^2-2x+1}{3} & 1<x \leq 2.2 \\
+\frac{1.2x-1.92}{1.5} & 2.2<x<2.7 \\
+\frac{(x-3)^2-0.75}{-0.75} & 2.7 \leq x < 3 \\ 0 & otherwise
+\end{cases}$$
+
+It is now time to construct the inverse of the CDF of the function g:
+```{r}
+ trapezium <- function(u){
+ifelse(u <= 0.48, sqrt(3*u)+1,
+ifelse(u <=0.88, (1.5*u+1.92)/1.2, -sqrt(0.75-0.75*u)+3))
+}
+```
+We can plot $f*_X (x)$ and $Mg_Y (x)$ in the same axes, to show that $f*_X (x)<Mg_Y (x)$:
+```{r}
+#f*(x) is blue line, Mg(x) is red line
+plot(x, fstar(x),
+main="f*(x),Mg(x)",
+ylab="",
+type="l",
+col="blue")
+lines(x,M*g(x), col="red")
+legend("topleft",
+c("fstar(x)","M*g(x)"),
+fill=c("blue","red")
+)
+```
+We can now move on to our main rejection function:
+```{r}
+rej_generator <- function(n){
+#create empty nx1 vector of 0s
+rand <- rep(0,n)
+i <- 1
+rejected <- 0
+while(i<=n){
+#generate random number from U(0,1)
+u <- runif(1)
+#sample from trapezium function
+y <- trapezium(runif(1))
+#accept if the below condition is satisfied
+if( (M * g(y) * u) <= fstar(y)){
+#replace ith element of vector rand with y
+rand[i] <- y
+i <- i+1
+}
+#reject otherwise, add 1 to the running total of rejected values
+else rejected <- rejected+ 1
+}
+#show empirical acceptance probability
+cat("Empirical acceptance probability = ", format(n),"/",format(n+rejected)," = ",
+format((n)/(n+rejected)),"\n")
+#output generated random numbers
+rand
+}
+```
+It happens that we have an outstanding empirical acceptance probability of ~85%, which converges to our theoretical acceptance probability. We can calculate the run time of our function with the system.time function:
+```{r}
+#output run time for sample sizes
+system.time({ rej_generator(1000) })
+system.time({ rej_generator(10000) })
+system.time({ rej_generator(100000) })
+system.time({ rej_generator(1000000) })
+#warning: run time is 80 seconds for 10^7 samples!
+system.time({ rej_generator(10000000) })
+```
+
+It seems that our run time increases by a factor of 10 when we multiply our sample size by 10: the run time for 1000 samples was 0.08 seconds, 10000 was 0.8 seconds and so on.
+
+Our high acceptance probability of 85% implies that our algorithm is efficient, so there is little need for pretesting/squeezing, but we have provided a brief description of it below:
+
+Calculating the exponential and logarithmic function is computationally expensive as R (and other programming languages) uses a polynomial approximation. Pretesting/squeezing is a way to reject or accept certain values straight away.
+We would want:
+
+$W_L (x)\leq \frac{f*_X (x)}{Mg_Y (x)} \leq W_U(x)$
+
+So we accept our $U$ if $MU<W_L (x)$ and reject if $MU>W_U (x)$. 
+
+
+###2. Testing
+
+The most basic plot would be a histogram of our rejection algorithm function with a large value of n applied to it:
+```{r}
+hist(rej_generator(1000000),100)
+```
+Which thankfully mirrors the shape of our actual function $f*_X (x)$!
+
+Another plot we could add is a lag plot, which would show that our generated numbers are uncorrelated:
+
+```{r}
+lag.plot(rej_generator(10000),lags=3)
+```
+
+We see no trend, which is great!
+
+We shall install nortest, a package containing various statistical/normality tests:
+```{r}
+#install nortest
+library(nortest)
+```
+
+We will now rewrite our rejection function, but this time, we won't print the acceptance probability each time we run it:
+```{r}
+rej_generator <- function(n){
+#create empty nx1 vector of 0s
+rand <- rep(0,n)
+i <- 1
+rejected <- 0
+while(i<=n){
+#generate random number from U(0,1)
+u <- runif(1)
+#sample from trapezium function
+y <- trapezium(runif(1))
+#accept if the below condition is satisfied
+if( (M * g(y) * u) <= fstar(y)){
+#replace ith element of vector rand with y
+rand[i] <- y
+i <- i+1
+}
+#reject otherwise, add 1 to the running total of rejected values
+else rejected <- rejected+ 1
+}
+rand
+}
+```
+
+The Lindeberg-Lévy version of the Central Limit Theorem states that the asymptotic distribution of the random variable $\sqrt{n}\frac{S_n-\mu}{\sigma}$ is $N\sim(0,1)$, where $S_n$ is our sample mean, given that our samples are independent and identically distributed, and $\mu$ is the true mean of our distribution.
+
+We calculate the mean and variance of our pdf $f_X (x)$ as follows:
+
+```{r}
+xfstar<-function(x){
+  #note f(x)=f*(x)/1.251334, our normalising constant
+  xfstar<-x*fstar(x)/1.251334
+  return(xfstar)
+}
+#integrate xf(x) to find the mean
+integrate(xfstar,1,3)
+#define x^2 f(x)
+ xsquaredfstar<-function(x){
+xsquaredfstar<-(x^2)*fstar(x)/1.251334
+return(xsquaredfstar)
+ }
+#integral x f*(x)=2.247085
+integrate(xsquaredfstar,1,3)
+#integral x^2 f*(x)=5.199436
+#use variance formula:
+mean=2.247085
+var=5.199436-(2.247085)^2
+#compute standard deviation
+sigma=sqrt(var)
+```
+
+
+
+```{r}
+#form array of test statistics
+test_stat_grid<-function(n){
+  stat_vec=rep(0,n)
+  i=1
+  while(i<n){
+    #generate 10000 random numbers and find mean
+  sample_mean=sum(rej_generator(10000))/10000
+  #use sqrt(n)*(sample mean-mean) 
+  stat_vec[i]<-sqrt(10000)*(sample_mean-mean)/sigma
+  i=i+1
+  }
+  return(stat_vec)
+}
+```
+
+A possible statistical test which checks whether our samples follow a standard normal distribution $N(0,1)$ is the Anderson-Darling test:
+
+```{r}
+ad.test(test_stat_grid(1000))
+```
+
+Our p value is above 0.05, so we accept our null hypothesis, i.e. the central limit theorem is obeyed.
+
+Another such normality test is the Cramer-von Mises test:
+
+```{r}
+cvm.test(test_stat_grid(1000))
+```
+Again, our p value is above 0.05, which leads us to accept our null hypothesis again.
+
+
+### 3. Monte Carlo
+
+A Monte Carlo method can be used to estimate our normalising constant $\frac{1}{\theta}$ where $\theta=\int f*_X (x) \mathrm{d}x=\int \phi(x)f(x) \mathrm{d}x=\mathrm{E}_f[\phi(X)]$, $f(x)$ being a pdf, such that $f_X (X)=\frac{f*_ X(x)}{\theta}$ is a valid probability density function.
+
+In hit-or-miss Monte Carlo, we look for a constant $c$ such that $c=sup_{x} f*_X (x)$.
+Our $f(x)$ here is a rectangle function of the form $f(x)=\frac{1}{2}=\frac{1}{b-a}$, with $a=1,b=3$, and theta is therefore equal to $\int^3_1 f*_X (x)f(x)\mathrm{d}x$.
+```{r}
+c=max(fstar(x))
+```
+
+Our algorithm can be defined as follows:
+
+1. Set i=1
+2. Let I=rep(0,n)
+3. While $i< n$:
+Generate $U=u_i \sim U(1,3)$
+Generate $V=v_i \sim  U(0,c)$
+If $v_i \leq f*_X (u_i)$, let $I[i]=1$
+i=i+1
+4. $\tilde{\theta}=\frac{c(3-1)sum(I)}{n}$
+
+In our specific case, $\tilde{\theta}=2c\frac{\sum^n_{i=1}\mathbb{I}(v_i \leq f*_X (u_i))}{n}$, where $(3-1)c=2c$ is the area of our bounding rectangle and $\frac{\sum^n_{i=1}\mathbb{I}(v_i \leq f*_X (u_i))}{n}$ is the proportion of our points lying below our function $f*_X$.
+
+```{r}
+hitmiss_mc<-function(n){
+  i<-1
+  #create empty 1xn vec of 0s
+  I=rep(0,n)
+  while(i<n){
+    #generate random uniform between 1 and 3
+    u=runif(1,1,3)
+    #generate random uniform between 0 and c
+    v=runif(1,0,c)
+    #
+    if(v<=fstar(u)) {
+      #if condition satisifed, ith element of I becomes 1
+      I[i]<-1
+    }
+    i=i+1
+  }
+#calculate estimator
+theta_est<-2*c*sum(I)/n
+return(theta_est)
+}
+
+```
+Another Monte Carlo method is Monte Carlo with importance sampling (instead of direct sampling):
+
+$\theta=\int \phi(x)f(x)\mathrm{d}x=\int\phi(x)\frac{f(x)}{g(x)}g(x)\mathrm{d}x=\int\phi(x)W(x)g(x)\mathrm{d}x=\mathrm{E}_g [W(x)\phi(x)]$ with the condition that $f(x)>0 \implies g(x)>0$.
+If we let $\phi(x)=k$, which is 1 divided by our normalising constant, it is easy to show that an unbiased estimator of $\theta$ is $\hat{\theta}_{IS}=\frac{1}{n}\sum^n_{i=1} W(X_i)\phi(X_i)$, which becomes simply $\frac{1}{n}\sum^n_{i=1} \frac{f*_X (X_i)}{g(X_i)}$.
+
+A safe choice of $g(x)$ is the trapezium function we used for our rejection algorithm, as we know that we can sample from that function using inversion:
+
+
+```{r}
+importance_mc<-function(n){
+  i<-1
+  #create empty vec of 0s
+  MC<-rep(0,n)
+  while(i<n){
+    #sampling x from trapezium function
+    x<-trapezium(runif(1))
+    #ith element of vector becomes f*/g
+    MC[i]<-fstar(x)/g(x)
+    i<-i+1
+  }
+  #calculate estimator
+  theta_est<-sum(MC)/n
+  return(theta_est)
+}
+```
+Now it's time to compare the mean and variance of 1000 realisations of our two estimators:
+```{r}
+realization_importance_mc<-function(n){
+importance_vec<-rep(0,n)
+i<-1
+while(i<n){
+importance_vec[i]<-importance_mc(10000)
+i<-i+1
+}
+return(importance_vec)
+}
+mean(realization_importance_mc(1000))
+var(realization_importance_mc(1000))
+
+realization_hitmiss_mc<-function(n){
+hitmiss_vec<-rep(0,n)
+i<-1
+while(i<n){
+hitmiss_vec[i]<-hitmiss_mc(10000)
+i<-i+1
+}
+return(hitmiss_vec)
+}
+mean(realization_hitmiss_mc(1000))
+var(realization_hitmiss_mc(1000))
+```
+
+We see that while the empirical mean of both estimators (with 1000 samples) are fairly close to the true mean, the  empirical variance of the importance sampling Monte Carlo function, which is ~0.00157, is higher than that of hit and miss, which is ~0.0017.
